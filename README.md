@@ -1,7 +1,7 @@
 # patched-pyximport
 Simple pyximport patch for Cython projects. This will extend pyximport, making it more usable for effortlessly compilling Cython code automatically.
 
-You can just copy the "patch_pyximport.py" file into your projects and start using it. This repository serves as an example of how to use it.
+You can just copy the `patch_pyximport.py` file into your projects and start using it. This repository serves as an example of how to use it. Just run the `__main__.py` `file
 
 Currently (Feb 2022) Cython's pyximport can be finicky to use. This work extends pyximport to:
 - Locally place all compiled extensions to avoid naming collisions between two modules from different, unrelated projects that have the same name. 
