@@ -60,10 +60,11 @@ def install(location, annotate = True, inplace = False):
         )
     )
 
-    from Cython.Compiler import Options
-    Options.annotate = annotate;
 
     if pyx_importer is not None:
+        from Cython.Compiler import Options
+        Options.annotate = annotate;
+
         py_pxd_importer = (
             PyPxdImporter(
                 pyxbuild_dir=build_path,
