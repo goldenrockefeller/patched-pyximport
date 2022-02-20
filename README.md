@@ -11,4 +11,4 @@ Currently (Feb 2022) Cython's pyximport can be finicky to use. This work extends
 - Set language level to 3 by default. Since Python 3 is now the dominant python version.
 
 
-Note that, in most situations, this will not install import hooks if Cython's pyximport installs its hooks first. Additionally, Cython's pyximport will not install its hooks if this patched pyximport installs its hooks first.
+Note that, in most situations, this will uninstall Cython's pyximport import hooks so that it can install its own. Additionally, Cython's pyximport will not install its hooks if this patched pyximport installs its hooks first.
