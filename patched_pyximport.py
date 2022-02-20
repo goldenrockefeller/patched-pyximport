@@ -11,6 +11,7 @@ from Cython.Distutils.build_ext import build_ext
 
 loaded_recorded_stats = {}
 is_patched_importer_installed = False
+are_recorded_stats_loaded = False
 
 
 
@@ -20,7 +21,7 @@ is_patched_importer_installed = False
 def new_finalize_options(bld_ext):
     old_finalize_options = bld_ext.finalize_options
     def finalize_options(bld_ext):
-        bld_ext.build_temp = str(pathlib.Path.home().joinpath("_pyxbld_temp"))
+        bld_ext.build_temp = str(pathlib.Path.home().joinpath("_pyxbld").joinpath("temp"))
         old_finalize_options(bld_ext)
     return finalize_options
 
@@ -38,61 +39,52 @@ class RecordedStat:
         stat = path.stat()
         return RecordedStat(stat.st_mtime, stat.st_size)
 
-def read_local_recorded_stats(filepath):
-    global loaded_recorded_stats
+def load_recorded_stats():
+    global loaded_recorded_stats, are_recorded_stats_loaded
 
-    parent_dir = pathlib.Path(filepath).parent
-
-    pyxbld_dir = parent_dir.joinpath("_pyxbld")
-
+    pyxbld_dir = pathlib.Path.home().joinpath("_pyxbld")
     pyxbld_dir.mkdir(exist_ok = True)
+    recorded_stats_path = pyxbld_dir.joinpath("recorded_stats.pkl")
 
-    local_recorded_stats_path = pyxbld_dir.joinpath("local_recorded_stats.pkl")
+    if recorded_stats_path.exists():
+        with open(recorded_stats_path, 'rb') as recorded_stats_file:
+            loaded_recorded_stats = pickle.load(recorded_stats_file)
+    else:
+        with open(recorded_stats_path, 'wb') as recorded_stats_file:
+            recorded_stats = {}
+            pickle.dump(recorded_stats, recorded_stats_file)
 
-    if not local_recorded_stats_path.exists():
-        with open(local_recorded_stats_path, 'wb') as local_recorded_stats_file:
-            local_recorded_stats = {}
-            pickle.dump(local_recorded_stats, local_recorded_stats_file)
+    are_recorded_stats_loaded = True
 
+def save_recorded_stats():
+    global loaded_recorded_stats, are_recorded_stats_loaded
 
-    with open(local_recorded_stats_path, 'rb') as local_recorded_stats_file:
-        local_recorded_stats = pickle.load(local_recorded_stats_file)
+    pyxbld_dir = pathlib.Path.home().joinpath("_pyxbld")
+    pyxbld_dir.mkdir(exist_ok = True)
+    recorded_stats_path = pyxbld_dir.joinpath("recorded_stats.pkl")
 
-        for filename in local_recorded_stats:
-            filepath = parent_dir.joinpath(filename)
-            loaded_recorded_stats[str(filepath)] = local_recorded_stats[filename]
+    if not are_recorded_stats_loaded:
+        load_recorded_stats()
 
+    with open(recorded_stats_path, 'wb') as recorded_stats_file:
+        pickle.dump(loaded_recorded_stats, recorded_stats_file)
 
 def recorded_stat(filepath):
     global loaded_recorded_stats
 
     if filepath not in loaded_recorded_stats:
-        read_local_recorded_stats(filepath)
+        path = pathlib.Path(filepath)
+        path.touch()
+        update_recorded_stat(filepath)
 
-        if filepath not in loaded_recorded_stats:
-            path = pathlib.Path(filepath)
-            path.touch()
-            update_recorded_stat(filepath)
-
-    return loaded_recorded_stats[filepath]
+    return loaded_recorded_stats[str(filepath)]
 
 
 def update_recorded_stat(filepath):
     global loaded_recorded_stats
 
-    path = pathlib.Path(filepath)
-    parent_dir = path.parent
-
-    pyxbld_dir = parent_dir.joinpath("_pyxbld")
-    local_recorded_stats_path = pyxbld_dir.joinpath("local_recorded_stats.pkl")
-    with open(local_recorded_stats_path, 'rb') as local_recorded_stats_file:
-        local_recorded_stats = pickle.load(local_recorded_stats_file)
-
-    local_recorded_stats[path.name] = RecordedStat.from_filepath(filepath)
-    with open(local_recorded_stats_path, 'wb') as local_recorded_stats_file:
-        pickle.dump(local_recorded_stats, local_recorded_stats_file)
-
     loaded_recorded_stats[str(filepath)] = RecordedStat.from_filepath(filepath)
+    save_recorded_stats()
 
 def check_and_touch_one(filepath):
     the_recorded_stat = recorded_stat(filepath)
@@ -228,6 +220,8 @@ def install(annotate = True):
 
     if not is_patched_importer_installed:
         replace_cython_build_ext()
+
+        load_recorded_stats()
 
         # Next line is needed to define 'pyxargs'
         pyximport.install(build_in_temp = False); uninstall_unpatched_importers()
