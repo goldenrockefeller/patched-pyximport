@@ -12,7 +12,11 @@ from Cython.Distutils.build_ext import build_ext
 loaded_recorded_stats = {}
 is_patched_importer_installed = False
 
-# Temporary directories are long because pyximport "doubles" the parent path.
+
+
+
+# Temporary directories are long because pyximport "doubles" the parent directory path.
+
 def new_finalize_options(bld_ext):
     old_finalize_options = bld_ext.finalize_options
     def finalize_options(bld_ext):
@@ -20,7 +24,8 @@ def new_finalize_options(bld_ext):
         old_finalize_options(bld_ext)
     return finalize_options
 
-build_ext.finalize_options = new_finalize_options(build_ext)
+def replace_cython_build_ext():
+    build_ext.finalize_options = new_finalize_options(build_ext)
 
 @dataclass
 class RecordedStat:
@@ -222,6 +227,7 @@ def install(annotate = True):
     global is_patched_importer_installed
 
     if not is_patched_importer_installed:
+        replace_cython_build_ext()
 
         # Next line is needed to define 'pyxargs'
         pyximport.install(build_in_temp = False); uninstall_unpatched_importers()
