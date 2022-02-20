@@ -101,8 +101,6 @@ def check_and_touch_one(filepath):
 
 def check_and_touch_dependencies(path):
     dependency_tree = create_dependency_tree()
-    # Path To String?
-    # Original path in list?
     dependencies = dependency_tree.all_dependencies(str(path))
 
     for dependency in dependencies:
@@ -188,7 +186,6 @@ class PyPxdImporter(pyximport.PyImporter):
 
             if pxd_path.exists():
                 check_and_touch_dependencies(mod_path)
-                # Does this need to be a string
                 self.pyxbuild_dir = package_parent(mod_path, fullname).joinpath("_pyxbld")
                 return pyximport.PyImporter.find_module(self, fullname, package_path)
             else:
