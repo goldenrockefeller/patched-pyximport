@@ -4,16 +4,11 @@ import importlib
 import sys
 import pickle
 from dataclasses import dataclass
+import os
 
 from Cython.Compiler import Options
 from Cython.Build.Dependencies import create_dependency_tree
 from Cython.Distutils.build_ext import build_ext
-
-loaded_recorded_stats = {}
-is_patched_importer_installed = False
-are_recorded_stats_loaded = False
-
-
 
 
 # Temporary directories are long because pyximport "doubles" the parent directory path.
@@ -29,79 +24,73 @@ def replace_cython_build_ext():
     build_ext.finalize_options = new_finalize_options(build_ext)
 
 @dataclass
-class RecordedStat:
+class PathStat:
     st_mtime: float
     st_size: int
 
     @staticmethod
-    def from_filepath(filepath):
-        path = pathlib.Path(filepath)
+    def from_path(path):
+        path = pathlib.Path(path)
         stat = path.stat()
-        return RecordedStat(stat.st_mtime, stat.st_size)
+        return PathStat(stat.st_mtime, stat.st_size)
 
-def load_recorded_stats():
-    global loaded_recorded_stats, are_recorded_stats_loaded
+class RecordedPathStatsManager:
+    def __init__(self, stats_path):
+        self.stats_path = stats_path
+        self.stats = recorded_stats_from_path(stats_path)
+        self.dependency_tree = create_dependency_tree()
 
-    pyxbld_dir = pathlib.Path.home().joinpath("_pyxbld")
-    pyxbld_dir.mkdir(exist_ok = True)
-    recorded_stats_path = pyxbld_dir.joinpath("recorded_stats.pkl")
+    def save_stats(self):
+        save_recorded_stats_to_path(self.stats, self.stats_path)
 
-    if recorded_stats_path.exists():
-        with open(recorded_stats_path, 'rb') as recorded_stats_file:
-            loaded_recorded_stats = pickle.load(recorded_stats_file)
-    else:
-        with open(recorded_stats_path, 'wb') as recorded_stats_file:
-            recorded_stats = {}
-            pickle.dump(recorded_stats, recorded_stats_file)
+    def update_stats_for_path(self, path):
+        self.stats[str(path)] = PathStat.from_path(path)
+        self.save_stats()
 
-    are_recorded_stats_loaded = True
+    def check_and_touch_one(self, path):
+        path = pathlib.Path(path)
+        if self.stats.get(str(path)) != PathStat.from_path(path):
+            path.touch()
+            self.update_stats_for_path(path)
 
-def save_recorded_stats():
-    global loaded_recorded_stats, are_recorded_stats_loaded
+    def check_and_touch_dependencies(self, source_path):
+        str_dependency_paths = self.dependency_tree.all_dependencies(str(source_path))
 
-    pyxbld_dir = pathlib.Path.home().joinpath("_pyxbld")
-    pyxbld_dir.mkdir(exist_ok = True)
-    recorded_stats_path = pyxbld_dir.joinpath("recorded_stats.pkl")
-
-    if not are_recorded_stats_loaded:
-        load_recorded_stats()
-
-    with open(recorded_stats_path, 'wb') as recorded_stats_file:
-        pickle.dump(loaded_recorded_stats, recorded_stats_file)
-
-def recorded_stat(filepath):
-    global loaded_recorded_stats
-
-    if filepath not in loaded_recorded_stats:
-        path = pathlib.Path(filepath)
-        path.touch()
-        update_recorded_stat(filepath)
-
-    return loaded_recorded_stats[str(filepath)]
+        for str_path in str_dependency_paths:
+            self.check_and_touch_one(str_path)
 
 
-def update_recorded_stat(filepath):
-    global loaded_recorded_stats
 
-    loaded_recorded_stats[str(filepath)] = RecordedStat.from_filepath(filepath)
-    save_recorded_stats()
+def recorded_stats_from_path(path):
 
-def check_and_touch_one(filepath):
-    the_recorded_stat = recorded_stat(filepath)
+    recorded_stats = {}
 
-    path = pathlib.Path(filepath)
-    stat = path.stat()
+    if path.exists():
+        with open(path, 'rb') as recorded_stats_file:
+            recorded_stats = pickle.load(recorded_stats_file)
 
-    if stat.st_mtime != the_recorded_stat.st_mtime or stat.st_size != the_recorded_stat.st_size:
-        path.touch()
-        update_recorded_stat(filepath)
+    return recorded_stats
 
-def check_and_touch_dependencies(path):
-    dependency_tree = create_dependency_tree()
-    dependencies = dependency_tree.all_dependencies(str(path))
+def save_recorded_stats_to_path(recorded_stats, path):
+    with open(path, 'wb') as recorded_stats_file:
+        pickle.dump(recorded_stats, recorded_stats_file)
 
-    for dependency in dependencies:
-        check_and_touch_one(dependency)
+
+#
+# def module_is_up_to_date(source_path, dependency_paths, recorded_stats):
+#     current_dependency_stats = [
+#         PathStat.from_path(dependency_path)
+#         for dependency_path
+#         in dependency_paths
+#     ]
+#     recorded_dependency_stats = [
+#         recorded_stats.get((str(source_path), str(dependency_path)))
+#         for dependency_path
+#         in dependency_paths
+#     ]
+#
+#     return current_dependency_stats == recorded_dependency_stats
+
 
 def get_path_from_spec(spec, ext):
 
@@ -125,26 +114,22 @@ def get_path_from_spec(spec, ext):
         return path
 
 
-def uninstall_unpatched_importers():
+def uninstall_importers():
     for importer in sys.meta_path:
-        if (
-            isinstance(importer, pyximport.PyxImporter)
-            and not isinstance(importer, PyxImporter)
-            and not isinstance(importer, PyPxdImporter)
-        ):
+        if isinstance(importer, pyximport.PyxImporter):
             sys.meta_path.remove(importer)
 
 
-def package_parent(mod_path, fullname):
+def package_dir(source_path, fullname):
     mod_split = fullname.split(".")
 
     if len(mod_split) == 1:
         # This is a free module
-        return mod_path.parent
+        return source_path.parent
     else:
         # This module is in a package
         modname = mod_split.pop()
-        dir = mod_path.parent
+        dir = source_path.parent
 
         while len(mod_split) > 1:
             pkg_name = mod_split.pop()
@@ -159,7 +144,7 @@ class PyPxdImporter(pyximport.PyImporter):
     """
         Compiles .py files only if there is an accompanying .pxd file
     """
-    def __init__(self, pyxbuild_dir=None, inplace=False, language_level=None):
+    def __init__(self, recorded_stats_manager, pyxbuild_dir=None, inplace=False, language_level=None):
         pyximport.PyImporter.__init__(
             self,
             pyxbuild_dir=pyxbuild_dir,
@@ -167,6 +152,7 @@ class PyPxdImporter(pyximport.PyImporter):
             language_level=language_level
         )
         self.checked_names = set()
+        self.recorded_stats_manager = recorded_stats_manager
 
     def find_module(self, fullname, package_path=None):
 
@@ -176,14 +162,14 @@ class PyPxdImporter(pyximport.PyImporter):
             self.checked_names.add(fullname)
             spec = importlib.util.find_spec(fullname)
 
-        mod_path = get_path_from_spec(spec, ".py")
+        source_path = get_path_from_spec(spec, ".py")
 
-        if mod_path is not None:
-            pxd_path = mod_path.parent.joinpath(mod_path.stem).with_suffix(".pxd")
+        if source_path is not None:
+            pxd_path = source_path.parent.joinpath(source_path.stem).with_suffix(".pxd")
 
             if pxd_path.exists():
-                check_and_touch_dependencies(mod_path)
-                self.pyxbuild_dir = package_parent(mod_path, fullname).joinpath("_pyxbld")
+                self.recorded_stats_manager.check_and_touch_dependencies(source_path)
+                self.pyxbuild_dir = package_dir(source_path, fullname).joinpath("_pyxbld")
                 return pyximport.PyImporter.find_module(self, fullname, package_path)
             else:
                 return None
@@ -195,7 +181,7 @@ class PyxImporter(pyximport.PyxImporter):
     """
         Compiles .pyx files
     """
-    def __init__(self, extension=pyximport.PYX_EXT, pyxbuild_dir=None, inplace=False, language_level=None):
+    def __init__(self, recorded_stats_manager, extension=pyximport.PYX_EXT, pyxbuild_dir=None, inplace=False, language_level=None):
         pyximport.PyxImporter.__init__(
             self,
             extension=extension,
@@ -204,36 +190,38 @@ class PyxImporter(pyximport.PyxImporter):
             language_level=language_level
         )
 
+        self.recorded_stats_manager = recorded_stats_manager
+
     def find_module(self, fullname, package_path=None):
 
         loader = pyximport.PyxImporter.find_module(self, fullname, package_path)
 
         if loader is not None:
-            mod_path = pathlib.Path(loader.path)
-            check_and_touch_dependencies(mod_path)
-            loader.pyxbuild_dir = package_parent(mod_path, fullname).joinpath("_pyxbld")
+            source_path = pathlib.Path(loader.path)
+            self.recorded_stats_manager.check_and_touch_dependencies(source_path)
+            loader.pyxbuild_dir = package_dir(source_path, fullname).joinpath("_pyxbld")
 
         return loader
 
-def install(annotate = True):
-    global is_patched_importer_installed
+def install(annotating = True):
 
-    if not is_patched_importer_installed:
-        replace_cython_build_ext()
+    replace_cython_build_ext()
 
-        load_recorded_stats()
+    recorded_stats_path = pathlib.Path.home().joinpath("_pyxbld").joinpath("recorded_stats.pkl")
+    recorded_stats_manager = RecordedPathStatsManager(recorded_stats_path)
 
-        # Next line is needed to define 'pyxargs'
-        pyximport.install(build_in_temp = False); uninstall_unpatched_importers()
+    # Next line is needed to define 'pyxargs'
+    pyximport.install(build_in_temp = False)
 
-        Options.annotate = annotate;
+    uninstall_importers()
 
-        py_pxd_importer = PyPxdImporter(language_level=3)
-        pyx_importer = PyxImporter(language_level=3)
+    Options.annotate = annotating;
 
-        # make sure we import Cython before we install the import hook
-        import Cython.Compiler.Main, Cython.Compiler.Pipeline, Cython.Compiler.Optimize
-        sys.meta_path.insert(0, py_pxd_importer)
-        sys.meta_path.insert(0, pyx_importer)
+    py_pxd_importer = PyPxdImporter(recorded_stats_manager, language_level=3)
+    pyx_importer = PyxImporter(recorded_stats_manager, language_level=3)
 
-        is_patched_importer_installed = True
+    # make sure we import Cython before we install the import hook
+    import Cython.Compiler.Main, Cython.Compiler.Pipeline, Cython.Compiler.Optimize
+    sys.meta_path.insert(0, py_pxd_importer)
+    sys.meta_path.insert(0, pyx_importer)
+
