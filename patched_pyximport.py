@@ -9,21 +9,20 @@ import os
 from Cython.Compiler import Options
 from Cython.Build.Dependencies import create_dependency_tree, create_extension_list, DistutilsInfo
 from Cython.Distutils.build_ext import build_ext
-from typing import Iterable, Set, MutableSet, Mapping, MutableMapping, Tuple
+from typing import Iterable, Set, MutableSet, Mapping, MutableMapping, Tuple, Union, Optional
 from Cython.Compiler.Options import CompilationOptions
 from Cython.Compiler.Main import Context
 
+StrOrPath = Union[str, Path]
+
 # Temporary directories are long because pyximport "doubles" the parent directory path.
-
-def new_finalize_options(bld_ext):
-    old_finalize_options = bld_ext.finalize_options
-    def finalize_options(bld_ext):
-        bld_ext.build_temp = str(Path.home().joinpath("_pyxbld").joinpath("temp"))
+def replace_cython_temp_build_dir(dir: StrOrPath):
+    old_finalize_options = build_ext.finalize_options
+    def new_finalize_options(bld_ext):
+        bld_ext.build_temp = str(dir)
         old_finalize_options(bld_ext)
-    return finalize_options
 
-def replace_cython_build_ext():
-    build_ext.finalize_options = new_finalize_options(build_ext)
+    build_ext.finalize_options = new_finalize_options
 
 @dataclass
 class PathStat:
@@ -332,9 +331,12 @@ class PyxImporter(pyximport.PyxImporter):
 
         return loader
 
-def install(annotating = True, recorded_stats_dir = None):
+def install(annotating = True, recorded_stats_dir: Optional[StrOrPath] = None, temp_build_dir: Optional[StrOrPath] = None):
 
-    replace_cython_build_ext()
+    if temp_build_dir is None:
+        temp_build_dir = Path.home().joinpath("_pyxbld").joinpath("temp")
+
+    replace_cython_temp_build_dir(temp_build_dir)
 
     if recorded_stats_dir is None:
         recorded_stats_dir = Path.home().joinpath("_pyxbld")
