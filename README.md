@@ -12,3 +12,5 @@ Currently (Feb 2022) Cython's pyximport can be finicky to use. This work extends
 
 
 Note that, in most situations, this patch will uninstall Cython's pyximport import hooks so that it can install its own. Additionally, Cython's pyximport will not install its hooks if this patched pyximport installs its hooks first.
+
+Note that this patch will not force Cython recompilation if only the C files are changed.
