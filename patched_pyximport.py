@@ -332,12 +332,13 @@ class PyxImporter(pyximport.PyxImporter):
 
         return loader
 
-def install(annotating = True):
+def install(annotating = True, recorded_stats_dir = None):
 
     replace_cython_build_ext()
 
-    recorded_stats_path = Path.home().joinpath("_pyxbld")
-    recorded_stats_manager = RecordedPathStatsManager(recorded_stats_path)
+    if recorded_stats_dir is None:
+        recorded_stats_dir = Path.home().joinpath("_pyxbld")
+    recorded_stats_manager = RecordedPathStatsManager(Path(recorded_stats_dir))
 
     # Next line is needed to define 'pyxargs'
     pyximport.install(build_in_temp = False)
